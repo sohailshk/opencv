@@ -406,6 +406,14 @@ public:
             CV_Assert(src.isContinuous());
             CV_Assert(dst.isContinuous());
 
+            // Listing every axis is the same as reducing the whole tensor. ReduceInvoker needs
+            // at least one axis left unreduced.
+            if (!axes.empty() &&
+                std::set<int>(axes.begin(), axes.end()).size() == shape(src).size()) {
+                axes.clear();
+                noop_with_empty_axes = false;
+            }
+
             if (axes.empty()) {
                 if (noop_with_empty_axes) {
                     // copyTo is not used here for the reason that we want a

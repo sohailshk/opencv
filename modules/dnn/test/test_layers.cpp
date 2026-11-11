@@ -1964,6 +1964,52 @@ TEST(Layer_Test_ReduceMean, accuracy_input_0)
     }
 }
 
+TEST(Layer_Test_Reduce, all_axes_listed_explicitly)
+{
+    // Listing every axis must give the same result as reducing the whole tensor.
+    const std::vector<int> shapes[] = { {3, 4}, {2, 3, 4} };
+    for (const std::vector<int>& szData : shapes)
+    {
+        const int rank = (int)szData.size();
+        Mat input(szData, CV_32FC1);
+        for (size_t i = 0; i < input.total(); i++)
+            input.ptr<float>()[i] = (float)i + 1.f;
+        const float expected[2] = { (float)(input.total() + 1) / 2.f, (float)input.total() };
+        const char* const ops[2] = { "MEAN", "MAX" };
+
+        for (int op = 0; op < 2; op++)
+        {
+            for (int variant = 0; variant < 4; variant++)
+            {
+                const int keepdims = variant & 1;
+                const int noop = variant >> 1;  // noop_with_empty_axes must not apply: axes are given
+                std::vector<int> axes;
+                for (int i = 0; i < rank; i++)
+                    axes.push_back(i - rank);  // negative axes, in descending significance
+
+                Net net;
+                LayerParams lp;
+                lp.type = "Reduce";
+                lp.name = "testReduceAllAxes";
+                lp.set("reduce", ops[op]);
+                lp.set("keepdims", keepdims);
+                lp.set("noop_with_empty_axes", noop);
+                lp.set("axes", DictValue::arrayInt(axes.data(), (int)axes.size()));
+                net.addLayerToPrev(lp.name, lp.type, lp);
+                net.setInput(input);
+                net.setPreferableBackend(DNN_BACKEND_OPENCV);
+
+                Mat output = net.forward();
+                ASSERT_EQ(1u, output.total()) << ops[op] << " keepdims=" << keepdims
+                                              << " noop=" << noop;
+                EXPECT_NEAR(expected[op], output.ptr<float>()[0], 1e-5) << ops[op] << " noop=" << noop;
+                if (keepdims)
+                    EXPECT_EQ(MatShape(std::vector<int>(rank, 1)), shape(output));
+            }
+        }
+    }
+}
+
 
 // Check if relu is not fused to convolution if we requested it's output
 TEST(Layer_Test_Convolution, relu_fusion)
