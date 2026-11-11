@@ -39,6 +39,7 @@
 
 #include "common.hpp"
 #include "vtransform.hpp"
+#include "vround_helper.hpp"
 
 #include <cstring>
 #include <cfloat>
@@ -56,6 +57,15 @@ bool isIntegerScale(f32 scale)
     return std::fabs(scale - static_cast<s32>(scale)) < FLT_EPSILON;
 }
 
+// round to nearest, ties to even: subtract 1 from the product when the truncated quotient
+// (product >> shift) is even, then use the rounding shift; this only changes the result for exact
+// ties (the discarded bits are 100..0), which then round down to the even quotient
+template <s32 shift>
+inline uint16x8_t roundShiftEven(uint16x8_t v, uint16x8_t mask)
+{
+    return vrshrq_n_u16(vqsubq_u16(v, vshrq_n_u16(vbicq_u16(mask, v), shift)), shift);
+}
+
 template <s32 shift>
 void mulu8(const Size2D &size,
            const u8 * src0Base, ptrdiff_t src0Stride,
@@ -65,6 +75,8 @@ void mulu8(const Size2D &size,
 {
     size_t roiw16 = size.width >= 15 ? size.width - 15 : 0;
     size_t roiw8 = size.width >= 7 ? size.width - 7 : 0;
+
+    uint16x8_t v_mask = vdupq_n_u16((u16)(1 << shift));
 
     for (size_t i = 0; i < size.height; ++i)
     {
@@ -84,21 +96,23 @@ void mulu8(const Size2D &size,
                 uint16x8_t v_dst0 = vmull_u8(vget_low_u8(v_src0), vget_low_u8(v_src1));
                 uint16x8_t v_dst1 = vmull_u8(vget_high_u8(v_src0), vget_high_u8(v_src1));
 
-                v_dst0 = vshrq_n_u16(v_dst0, shift);
-                v_dst1 = vshrq_n_u16(v_dst1, shift);
+                v_dst0 = roundShiftEven<shift>(v_dst0, v_mask);
+                v_dst1 = roundShiftEven<shift>(v_dst1, v_mask);
 
                 vst1q_u8(dst + j, vcombine_u8(vqmovn_u16(v_dst0), vqmovn_u16(v_dst1)));
             }
             for (; j < roiw8; j += 8)
             {
                 uint16x8_t v_dst = vmull_u8(vld1_u8(src0 + j), vld1_u8(src1 + j));
-                vst1_u8(dst + j, vqmovn_u16(vshrq_n_u16(v_dst, shift)));
+                v_dst = roundShiftEven<shift>(v_dst, v_mask);
+                vst1_u8(dst + j, vqmovn_u16(v_dst));
             }
 
             for (; j < size.width; j++)
             {
-                u16 val = (u16)src0[j] * (u16)src1[j];
-                dst[j] = internal::saturate_cast<u8>(val >> shift);
+                s32 val = (s32)src0[j] * (s32)src1[j];
+                val = (val - (((1 << shift) & ~val) >> shift) + (1 << (shift - 1))) >> shift;
+                dst[j] = internal::saturate_cast<u8>(val);
             }
         }
         else // CONVERT_POLICY_WRAP
@@ -347,10 +361,10 @@ void mul(const Size2D &size,
                                                                 vcvtq_f32_u32(vmovl_u16(vget_low_u16(v_src1_p)))), scale);
                     float32x4_t v_dst3f = vmulq_n_f32(vmulq_f32(vcvtq_f32_u32(vmovl_u16(vget_high_u16(v_src0_p))),
                                                                 vcvtq_f32_u32(vmovl_u16(vget_high_u16(v_src1_p)))), scale);
-                    uint16x8_t v_dst0u = vcombine_u16(vqmovn_u32(vcvtq_u32_f32(v_dst0f)),
-                                                      vqmovn_u32(vcvtq_u32_f32(v_dst1f)));
-                    uint16x8_t v_dst1u = vcombine_u16(vqmovn_u32(vcvtq_u32_f32(v_dst2f)),
-                                                      vqmovn_u32(vcvtq_u32_f32(v_dst3f)));
+                    uint16x8_t v_dst0u = vcombine_u16(vqmovn_u32(internal::vroundq_u32_f32(v_dst0f)),
+                                                      vqmovn_u32(internal::vroundq_u32_f32(v_dst1f)));
+                    uint16x8_t v_dst1u = vcombine_u16(vqmovn_u32(internal::vroundq_u32_f32(v_dst2f)),
+                                                      vqmovn_u32(internal::vroundq_u32_f32(v_dst3f)));
                     vst1q_u8(dst + j, vcombine_u8(vqmovn_u16(v_dst0u), vqmovn_u16(v_dst1u)));
                 }
                 for (; j < roiw8; j += 8)
@@ -361,15 +375,15 @@ void mul(const Size2D &size,
                                                                 vcvtq_f32_u32(vmovl_u16(vget_low_u16(v_src1)))), scale);
                     float32x4_t v_dst1f = vmulq_n_f32(vmulq_f32(vcvtq_f32_u32(vmovl_u16(vget_high_u16(v_src0))),
                                                                 vcvtq_f32_u32(vmovl_u16(vget_high_u16(v_src1)))), scale);
-                    uint16x8_t v_dstu = vcombine_u16(vqmovn_u32(vcvtq_u32_f32(v_dst0f)),
-                                                     vqmovn_u32(vcvtq_u32_f32(v_dst1f)));
+                    uint16x8_t v_dstu = vcombine_u16(vqmovn_u32(internal::vroundq_u32_f32(v_dst0f)),
+                                                     vqmovn_u32(internal::vroundq_u32_f32(v_dst1f)));
                     vst1_u8(dst + j, vqmovn_u16(v_dstu));
                 }
 
                 for (; j < size.width; j++)
                 {
                     f32 fval = (f32)src0[j] * (f32)src1[j] * scale;
-                    dst[j] = internal::saturate_cast<u8>((s32)trunc(fval));
+                    dst[j] = internal::saturate_cast<u8>(fval);
                 }
             }
         }
@@ -918,10 +932,10 @@ inline T mulSaturateQ(const T &v1, const T &v2, const float scale)
 }
 template <>
 inline int32x4_t mulSaturateQ<int32x4_t>(const int32x4_t &v1, const int32x4_t &v2, const float scale)
-{ return vcvtq_s32_f32(vmulq_n_f32(vmulq_f32(vcvtq_f32_s32(v1), vcvtq_f32_s32(v2)), scale)); }
+{ return internal::vroundq_s32_f32(vmulq_n_f32(vmulq_f32(vcvtq_f32_s32(v1), vcvtq_f32_s32(v2)), scale)); }
 template <>
 inline uint32x4_t mulSaturateQ<uint32x4_t>(const uint32x4_t &v1, const uint32x4_t &v2, const float scale)
-{ return vcvtq_u32_f32(vmulq_n_f32(vmulq_f32(vcvtq_f32_u32(v1), vcvtq_f32_u32(v2)), scale)); }
+{ return internal::vroundq_u32_f32(vmulq_n_f32(vmulq_f32(vcvtq_f32_u32(v1), vcvtq_f32_u32(v2)), scale)); }
 
 template <typename T>
 inline T mulSaturate(const T &v1, const T &v2, const float scale)
@@ -930,10 +944,10 @@ inline T mulSaturate(const T &v1, const T &v2, const float scale)
 }
 template <>
 inline int32x2_t mulSaturate<int32x2_t>(const int32x2_t &v1, const int32x2_t &v2, const float scale)
-{ return vcvt_s32_f32(vmul_n_f32(vmul_f32(vcvt_f32_s32(v1), vcvt_f32_s32(v2)), scale)); }
+{ return internal::vround_s32_f32(vmul_n_f32(vmul_f32(vcvt_f32_s32(v1), vcvt_f32_s32(v2)), scale)); }
 template <>
 inline uint32x2_t mulSaturate<uint32x2_t>(const uint32x2_t &v1, const uint32x2_t &v2, const float scale)
-{ return vcvt_u32_f32(vmul_n_f32(vmul_f32(vcvt_f32_u32(v1), vcvt_f32_u32(v2)), scale)); }
+{ return internal::vround_u32_f32(vmul_n_f32(vmul_f32(vcvt_f32_u32(v1), vcvt_f32_u32(v2)), scale)); }
 
 
 template <typename T>

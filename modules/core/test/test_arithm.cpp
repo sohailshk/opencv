@@ -3620,6 +3620,101 @@ TEST(Core_Arithm, mul_overflow_28557)
     }
 }
 
+// Expected values are saturate_cast of the exact result (round to nearest, ties to even). The scales
+// 0.25 and 0.125 of the multiply produce exact ties; 1/3, 2/3 and 10/3 never do. The 8-bit multiply
+// operands are kept small so that most results are not saturated.
+template <typename T>
+static void checkScaledMulRounding(int depth, double lo, double hi)
+{
+    RNG& rng = cvtest::TS::ptr()->get_rng();
+    const double mul_scales[] = { 1.0 / 3, 2.0 / 3, 10.0 / 3, 0.25, 0.125 };
+    const int widths[] = { 1, 7, 8, 9, 15, 16, 17, 31, 67 };
+
+    for (int w : widths)
+    {
+        Mat a(3, w, depth), b(3, w, depth), dst;
+        rng.fill(a, RNG::UNIFORM, lo, hi);
+        rng.fill(b, RNG::UNIFORM, lo, hi);
+
+        for (double scale : mul_scales)
+        {
+            cv::multiply(a, b, dst, scale);
+            ASSERT_EQ(depth, dst.depth());
+            for (int y = 0; y < a.rows; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    T expected = saturate_cast<T>((double)a.at<T>(y, x) * b.at<T>(y, x) * scale);
+                    ASSERT_EQ((int)expected, (int)dst.at<T>(y, x))
+                        << "width=" << w << " x=" << x << " scale=" << scale
+                        << " a=" << (int)a.at<T>(y, x) << " b=" << (int)b.at<T>(y, x);
+                }
+        }
+    }
+}
+
+template <typename T>
+static void checkReciprocalRounding(int depth, double lo, double hi)
+{
+    RNG& rng = cvtest::TS::ptr()->get_rng();
+    const double recip_scales[] = { 255.0, 1000.0, 0.7, 0.5 };
+    const int widths[] = { 1, 7, 8, 9, 15, 16, 17, 31, 67 };
+
+    for (int w : widths)
+    {
+        Mat b(3, w, depth), dst;
+        rng.fill(b, RNG::UNIFORM, lo, hi);
+
+        for (double scale : recip_scales)
+        {
+            // avoid exact ties (255 / b, 1000 / b and 0.7 / b can be half-integers for some b)
+            for (int y = 0; y < b.rows; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    double q = scale / b.at<T>(y, x);
+                    if (scale != 0.5 && b.at<T>(y, x) != 0 && std::abs(q - std::floor(q) - 0.5) < 1e-6)
+                        b.at<T>(y, x) += 1;
+                }
+            cv::divide(scale, b, dst);
+            ASSERT_EQ(depth, dst.depth());
+            for (int y = 0; y < b.rows; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int bv = b.at<T>(y, x);
+                    T expected = bv == 0 ? (T)0 : saturate_cast<T>(scale / bv);
+                    ASSERT_EQ((int)expected, (int)dst.at<T>(y, x))
+                        << "width=" << w << " x=" << x << " scale=" << scale << " b=" << bv;
+                }
+        }
+    }
+}
+
+typedef testing::TestWithParam<int> Core_ScaledRounding;
+
+TEST_P(Core_ScaledRounding, multiply)
+{
+    switch (GetParam())
+    {
+    case CV_8U:  checkScaledMulRounding<uchar>(CV_8U, 0, 40); break;
+    case CV_8S:  checkScaledMulRounding<schar>(CV_8S, -30, 30); break;
+    case CV_16U: checkScaledMulRounding<ushort>(CV_16U, 0, 300); break;
+    default:     checkScaledMulRounding<short>(CV_16S, -300, 300); break;
+    }
+}
+
+TEST_P(Core_ScaledRounding, reciprocal)
+{
+    switch (GetParam())
+    {
+    case CV_8U:  checkReciprocalRounding<uchar>(CV_8U, 0, 256); break;
+    case CV_8S:  checkReciprocalRounding<schar>(CV_8S, -128, 128); break;
+    case CV_16U: checkReciprocalRounding<ushort>(CV_16U, 0, 300); break;
+    default:     checkReciprocalRounding<short>(CV_16S, -300, 300); break;
+    }
+}
+
+INSTANTIATE_TEST_CASE_P(/**/, Core_ScaledRounding,
+    testing::Values((int)CV_8U, (int)CV_8S, (int)CV_16U, (int)CV_16S));
+
 TEST(Core_InRange, unsupported_depth_throws)
 {
     Mat src(1, 4, CV_16F, Scalar(1)), lower(1, 4, CV_16F, Scalar(0)), upper(1, 4, CV_16F, Scalar(2)), dst;

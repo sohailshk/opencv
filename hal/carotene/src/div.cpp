@@ -244,10 +244,10 @@ inline T recipSaturateQ(const T &v2, const float scale)
 }
 template <>
 inline int32x4_t recipSaturateQ<int32x4_t>(const int32x4_t &v2, const float scale)
-{ return vcvtq_s32_f32(vmulq_n_f32(internal::vrecpq_f32(vcvtq_f32_s32(v2)), scale)); }
+{ return internal::vroundq_s32_f32(vmulq_n_f32(internal::vrecpq_f32(vcvtq_f32_s32(v2)), scale)); }
 template <>
 inline uint32x4_t recipSaturateQ<uint32x4_t>(const uint32x4_t &v2, const float scale)
-{ return vcvtq_u32_f32(vmulq_n_f32(internal::vrecpq_f32(vcvtq_f32_u32(v2)), scale)); }
+{ return internal::vroundq_u32_f32(vmulq_n_f32(internal::vrecpq_f32(vcvtq_f32_u32(v2)), scale)); }
 
 template <typename T>
 inline T recipSaturate(const T &v2, const float scale)
@@ -256,10 +256,10 @@ inline T recipSaturate(const T &v2, const float scale)
 }
 template <>
 inline int32x2_t recipSaturate<int32x2_t>(const int32x2_t &v2, const float scale)
-{ return vcvt_s32_f32(vmul_n_f32(internal::vrecp_f32(vcvt_f32_s32(v2)), scale)); }
+{ return internal::vround_s32_f32(vmul_n_f32(internal::vrecp_f32(vcvt_f32_s32(v2)), scale)); }
 template <>
 inline uint32x2_t recipSaturate<uint32x2_t>(const uint32x2_t &v2, const float scale)
-{ return vcvt_u32_f32(vmul_n_f32(internal::vrecp_f32(vcvt_f32_u32(v2)), scale)); }
+{ return internal::vround_u32_f32(vmul_n_f32(internal::vrecp_f32(vcvt_f32_u32(v2)), scale)); }
 
 
 template <typename T>
@@ -308,8 +308,8 @@ void recip(const Size2D &size,
 
     if (scale == 0.0f ||
         (std::numeric_limits<T>::is_integer &&
-         scale <  1.0f &&
-         scale > -1.0f))
+         scale <= 0.5f &&
+         scale >= -0.5f))
     {
         for (size_t y = 0; y < size.height; ++y)
         {
