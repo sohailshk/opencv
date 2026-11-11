@@ -2094,6 +2094,32 @@ TEST(Imgproc_warpPolar, identity)
 #endif
 }
 
+TEST(Imgproc_warpPolar, inverse_map_roi_ignores_pixels_outside)
+{
+    // The inverse transform wraps the angle axis of the source. For a region of a larger image the
+    // wrapped rows must come from the region itself, not from the rows around it.
+    const Size size(40, 30);
+    const Size dsize(50, 50);
+    const Point2f center(24.f, 20.f);
+    const double radius = 20;
+
+    for (int logPolar = 0; logPolar < 2; logPolar++)
+    {
+        const int flags = INTER_LINEAR | WARP_INVERSE_MAP | WARP_FILL_OUTLIERS |
+                          (logPolar ? WARP_POLAR_LOG : WARP_POLAR_LINEAR);
+
+        Mat parent(size.height + 8, size.width + 6, CV_32FC1);
+        theRNG().fill(parent, RNG::UNIFORM, 0.f, 255.f);
+        Mat roi = parent(Rect(3, 4, size.width, size.height));
+        Mat standalone = roi.clone();
+
+        Mat expected, actual;
+        warpPolar(standalone, expected, dsize, center, radius, flags);
+        warpPolar(roi, actual, dsize, center, radius, flags);
+        EXPECT_MAT_NEAR(expected, actual, 0);
+    }
+}
+
 TEST(Imgproc_Remap, issue_23562)
 {
     cv::RNG rng(17);

@@ -3466,7 +3466,8 @@ void cv::warpPolar(InputArray _src, OutputArray _dst, Size dsize,
     else
     {
         const int ANGLE_BORDER = 1;
-        cv::copyMakeBorder(_src, _dst, ANGLE_BORDER, ANGLE_BORDER, 0, 0, BORDER_WRAP);
+        cv::copyMakeBorder(_src, _dst, ANGLE_BORDER, ANGLE_BORDER, 0, 0,
+                           BORDER_WRAP | BORDER_ISOLATED);
         Mat src = _dst.getMat();
         Size ssize = _dst.size();
         ssize.height -= 2 * ANGLE_BORDER;
