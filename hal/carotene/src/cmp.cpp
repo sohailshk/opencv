@@ -135,8 +135,9 @@ void vcompare(Size2D size,
     typedef typename internal::VecTraits<type>::vec128 vec128;
     typedef typename internal::VecTraits<type>::unsign::vec128 uvec128;
 
-    if (src0Stride == src1Stride && src0Stride == dstStride &&
-        src0Stride == (ptrdiff_t)(size.width * sizeof(type)))
+    // dst is a mask of u8: its rows are contiguous when dstStride == size.width
+    if (src0Stride == src1Stride && src0Stride == (ptrdiff_t)(size.width * sizeof(type)) &&
+        dstStride == (ptrdiff_t)size.width)
     {
         size.width *= size.height;
         size.height = 1;

@@ -2427,6 +2427,41 @@ TEST(Compare, regression_8999)
     EXPECT_THROW(cv::compare(A, B, C, CMP_LT), cv::Exception);
 }
 
+// On ARM (Carotene HAL) the rows of a comparison were merged into one when the destination step was
+// equal to the source step, which holds for a region of an 8-bit mask whose parent row has as many
+// bytes as a source row: the result was then written as if the mask were continuous.
+typedef testing::TestWithParam< tuple<int, int> > Compare_DestinationRegion;
+
+TEST_P(Compare_DestinationRegion, step_equals_source_row_size)
+{
+    RNG& rng = cvtest::TS::ptr()->get_rng();
+    const int depth = get<0>(GetParam());
+    const int op = get<1>(GetParam());
+    const int width = 7, height = 5;
+
+    Mat a(height, width, depth), b(height, width, depth);
+    rng.fill(a, RNG::UNIFORM, 0, 3);
+    rng.fill(b, RNG::UNIFORM, 0, 3);
+
+    Mat expected;
+    cv::compare(a, b, expected, op);
+
+    // the parent row has width * elemSize bytes, which is the step of a and b
+    Mat parent(height + 2, width * (int)a.elemSize(), CV_8U, Scalar(77));
+    Mat dst = parent(Rect(0, 1, width, height));
+    ASSERT_EQ((size_t)a.step, parent.step);
+
+    cv::compare(a, b, dst, op);
+
+    Mat parentExpected(parent.size(), CV_8U, Scalar(77));
+    expected.copyTo(parentExpected(Rect(0, 1, width, height)));
+    EXPECT_EQ(0, cvtest::norm(parentExpected, parent, NORM_INF));
+}
+
+INSTANTIATE_TEST_CASE_P(/**/, Compare_DestinationRegion,
+    testing::Combine(testing::Values((int)CV_16U, (int)CV_16S, (int)CV_32S, (int)CV_32F),
+                     testing::Values((int)CMP_EQ, (int)CMP_LT, (int)CMP_NE)));
+
 TEST(Compare, regression_16F_do_not_crash)
 {
     cv::Mat mat1(2, 2, CV_16F, cv::Scalar(1));
